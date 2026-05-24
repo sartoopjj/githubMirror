@@ -140,6 +140,106 @@ class APKMirror:
         soup = BeautifulSoup(resp.text, "html.parser")
         return soup.find("a", {"rel": "nofollow", "data-google-interstitial": "false"})["href"]
 
+# --- thefeed release asset helpers ---
+# Release matrix produces three families:
+#   thefeed-server-*          -> server binary (skip — clients only)
+#   thefeed-client-<plat>-*   -> CLI client binary (linux/darwin/freebsd/
+#                                windows + android raw "termux" binary)
+#   thefeed-android-*.apk     -> Android app
+#   thefeed-ios-*.ipa         -> iOS app
+
+def is_client_asset(name: str) -> bool:
+    n = name.lower()
+    if n.startswith('thefeed-server'):
+        return False
+    if n.startswith('thefeed-client'):
+        return True
+    if n.startswith('thefeed-android') and n.endswith('.apk'):
+        return True
+    if n.startswith('thefeed-ios') and n.endswith('.ipa'):
+        return True
+    return False
+
+# Requested order: openbsd -> termux -> darwin -> linux -> windows -> android
+# (termux = thefeed-client-android-* raw Go binary; android = .apk).
+# iOS and anything unknown sort to the end. Within a bucket: 64-bit
+# variants and the "universal" APK are surfaced first.
+def asset_sort_key(name: str):
+    n = name.lower()
+    # within-bucket tiebreaker — smaller wins, so 64-bit / universal first.
+    if 'universal' in n:
+        sub = 0
+    elif 'arm64' in n or 'amd64' in n or 'x86_64' in n:
+        sub = 1
+    else:
+        sub = 2
+    if 'openbsd' in n or 'freebsd' in n:
+        return (0, sub, n)
+    if n.startswith('thefeed-client-android'):
+        return (1, sub, n)
+    if 'darwin' in n:
+        return (2, sub, n)
+    if 'linux' in n:
+        return (3, sub, n)
+    if 'windows' in n:
+        return (4, sub, n)
+    if n.startswith('thefeed-android') and n.endswith('.apk'):
+        return (5, sub, n)
+    if 'ios' in n or n.endswith('.ipa'):
+        return (6, sub, n)
+    return (9, sub, n)
+
+def describe_asset(name: str) -> str:
+    """Short Persian one-liner describing a client asset."""
+    n = name.lower()
+    # Android APKs
+    if n.startswith('thefeed-android') and n.endswith('.apk'):
+        if 'universal' in n:
+            return 'مناسب همه گوشی‌های اندروید (پیشنهادی)'
+        if 'arm64-v8a' in n:
+            return 'اندروید — گوشی‌های جدید ۶۴ بیتی (سبک‌تر)'
+        if 'armeabi-v7a' in n:
+            return 'اندروید — گوشی‌های قدیمی ۳۲ بیتی'
+        if 'x86_64' in n:
+            return 'اندروید — کروم‌بوک، شبیه‌ساز و WSA (۶۴ بیتی)'
+        if 'x86' in n:
+            return 'اندروید — اینتل ۳۲ بیتی (نادر)'
+        return 'نسخه اندروید'
+    # Termux / raw android Go binary
+    if n.startswith('thefeed-client-android'):
+        if 'arm64' in n:
+            return 'کلاینت خط فرمان اندروید (Termux، ARM ۶۴ بیتی)'
+        if 'arm' in n:
+            return 'کلاینت خط فرمان اندروید (Termux، ARM ۳۲ بیتی)'
+        return 'کلاینت خط فرمان اندروید (Termux)'
+    # Desktop / server-OS clients
+    if 'darwin' in n:
+        if 'arm64' in n:
+            return 'کلاینت مک (Apple Silicon — M1/M2/M3)'
+        if 'amd64' in n:
+            return 'کلاینت مک (Intel)'
+        return 'کلاینت مک'
+    if 'linux' in n:
+        if 'arm64' in n:
+            return 'کلاینت لینوکس ARM ۶۴ بیتی (مثل رزبری‌پای)'
+        if 'amd64' in n:
+            return 'کلاینت لینوکس ۶۴ بیتی (Intel/AMD)'
+        return 'کلاینت لینوکس'
+    if 'freebsd' in n:
+        if 'arm64' in n:
+            return 'کلاینت FreeBSD ARM ۶۴ بیتی'
+        if 'amd64' in n:
+            return 'کلاینت FreeBSD ۶۴ بیتی'
+        return 'کلاینت FreeBSD'
+    if 'openbsd' in n:
+        return 'کلاینت OpenBSD'
+    if 'windows' in n:
+        return 'کلاینت ویندوز ۶۴ بیتی'
+    if n.endswith('.ipa') or 'ios' in n:
+        return 'iOS — نسخه پیش‌نمایش بدون امضا (نیاز به sideload)'
+    return ''
+
+
 class GitHubReleaseBot:
     def __init__(self):
         self.config = Config()
@@ -315,17 +415,14 @@ class GitHubReleaseBot:
         # Send introduction message
         if repo.github_url:
             intro_caption = f"🚀 New Release: #{repo.name}\n\n📦 Version: {release.get('tag_name', 'N/A')}\n🏷️ Type: {'Pre-release' if release.get('prerelease', False) else 'Stable'}\n📅 Date: {release.get('published_at', 'N/A')}\n\n⚓️ Github: {repo.github_url}\n🔗 {repo.github_url}/releases"
-            button_text = "🔗 Github Mirror"
         elif repo.google_play_url:
             intro_caption = f"🚀 New Release: #{repo.name}\n\n📦 Version: {release.get('tag_name', 'N/A')}\n📅 Date: {release.get('published_at', 'N/A')}\n\n🤖 Google Play: {repo.google_play_url}"
-            button_text = "🤖 Google Play Mirror"
         else:
             intro_caption = f"🚀 New Release: #{repo.name}\n\n📦 Version: {release.get('tag_name', 'N/A')}\n📅 Date: {release.get('published_at', 'N/A')}"
-            button_text = "🔗 Mirror"
-        
-        # Create inline keyboard
+
+        # Intro has no buttons — per-file messages carry the download link.
         channel_url = f"https://t.me/{channel_username}" if channel_username else f"https://t.me/c/{abs(channel_id)}"
-        keyboard = [[Button.url(button_text, url=channel_url)]]
+        keyboard = None
         
         # Fetch README.md if this is a GitHub repository
         readme_file_path = None
@@ -384,25 +481,32 @@ class GitHubReleaseBot:
         if not assets:
             logger.info("No assets found in release")
             return
-        
-        logger.info(f"Found {len(assets)} assets in release")
-        
+
+        # Keep client assets only (drop thefeed-server-*, checksums, notes).
+        # Server binaries are not for end-users in this channel.
+        assets = [a for a in assets if is_client_asset(a.get('name', ''))]
+
+        # Order: openbsd -> termux -> darwin -> linux -> windows -> android.
+        assets.sort(key=lambda a: asset_sort_key(a.get('name', '')))
+
+        logger.info(f"Found {len(assets)} client assets in release (after filter+sort)")
+
         # Process each asset individually
         for asset in assets:
             asset_name = asset.get('name', 'unknown')
             download_url = asset.get('browser_download_url', '')
-            
+
             if not download_url:
                 logger.error(f"No download URL for asset: {asset_name}")
                 continue
-            
+
             # Skip files with unwanted extensions
             skipped_extensions = {'.sha256', '.txt', '.yml', '.blockmap', '.idsig', '.md'}
             file_extension = os.path.splitext(asset_name)[1].lower()
             if file_extension in skipped_extensions:
                 logger.info(f"Skipping asset {asset_name} (unwanted extension: {file_extension})")
                 continue
-            
+
             logger.info(f"Processing asset: {asset_name}")
             
             # Download file to temp
@@ -455,22 +559,34 @@ class GitHubReleaseBot:
                     )
                     logger.info(f"File uploaded successfully: {uploaded_file}")
                     
-                    # Create inline keyboard for attached files
-                    channel_url = f"https://t.me/{channel_username}" if channel_username else f"https://t.me/c/{abs(channel_id)}"
+                    # Only the source-download button. The previous
+                    # "Github Mirror" channel button is removed.
                     if repo.github_url:
                         download_text = "📥 Download from Github"
                     elif repo.google_play_url:
                         download_text = "📥 Download from APKMirror"
                     else:
                         download_text = "📥 Download"
-                    keyboard = [[Button.url(download_text, url=download_url)], [Button.url(button_text, url=channel_url)]]
-                    
+                    keyboard = [[Button.url(download_text, url=download_url)]]
+
+                    # Caption — include a one-line Persian description of
+                    # the binary so users pick the right one.
+                    description = describe_asset(asset_name)
+                    desc_line = f"\n📝 {description}" if description else ""
+                    caption = (
+                        f"#{repo.name}\n"
+                        f"📦 Version: `{release.get('tag_name', 'N/A')}`\n"
+                        f"📎 File: `{asset_name}`"
+                        f"{desc_line}\n"
+                        f"🔒 SHA256: `{file_hash}`"
+                    )
+
                     # Then send the file using the handle
                     logger.info(f"Sending file with send_file method...")
                     await self.client.send_file(
                         channel_id,
                         file=uploaded_file,
-                        caption=f"#{repo.name}\n📦 Version: `{release.get('tag_name', 'N/A')}`\n📎 File: `{asset_name}`\n🔒 SHA256: `{file_hash}`",
+                        caption=caption,
                         buttons=keyboard,
                         parse_mode='md'
                     )
@@ -484,11 +600,11 @@ class GitHubReleaseBot:
                     
                 except Exception as e:
                     logger.error(f"Error sending file {asset_name}: {e}", exc_info=True)
-                    # Send fallback message with download button
+                    # Send fallback message with download button only.
                     size_mb = os.path.getsize(temp_file_path) // (1024 * 1024)
                     fallback_msg = f"📎 File: `{asset_name}`\n\n📊 Size: {size_mb} MB\n\n⚠️ Download from {'GitHub' if repo.github_url else 'APKMirror'}:"
-                    
-                    keyboard = [[Button.url(download_text, url=download_url)], [Button.url(button_text, url=download_url)]]
+
+                    keyboard = [[Button.url(download_text, url=download_url)]]
                     
                     await self.client.send_message(
                         channel_id,
@@ -586,12 +702,11 @@ class GitHubReleaseBot:
         for info in repo_info:
             message_text += f"#{info['name']}: `{info['version']}`\n"
         
-        # Create buttons
-        channel_url = f"https://t.me/{channel_username}" if channel_username else f"https://t.me/c/{abs(channel_id)}"
+        # Create buttons — thefeed channel directory.
         keyboard = [
-            [Button.url("🌐 اینترنت آزاد برای همه", "https://t.me/ircfspace")],
-            [Button.url("⚙️ کانفیگ رایگان فیلترشکن", "https://t.me/persianvpnhub")],
-            [Button.url("📦 میرور گیت‌هاب", channel_url)]
+            [Button.url("📢 کانال اصلی دفید", "https://t.me/networkti")],
+            [Button.url("📦 کانال فایل‌های باینری/نصبی دفید", "https://t.me/thefeedfile")],
+            [Button.url("⚙ کانال کانفیگ‌های دفید", "https://t.me/thefeedconfig")],
         ]
         
         try:
