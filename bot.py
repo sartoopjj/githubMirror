@@ -166,9 +166,13 @@ def is_client_asset(name: str) -> bool:
 # variants and the "universal" APK are surfaced first.
 def asset_sort_key(name: str):
     n = name.lower()
-    # within-bucket tiebreaker — smaller wins, so 64-bit / universal first.
+    # within-bucket tiebreaker — smaller wins, so 64-bit first.
+    # 'universal' is pushed to the end of its bucket on request: when
+    # users see four arch-specific APKs first they pick the one that
+    # matches their phone; only readers who don't recognise their arch
+    # fall through to the catch-all universal APK at the bottom.
     if 'universal' in n:
-        sub = 0
+        sub = 9
     elif 'arm64' in n or 'amd64' in n or 'x86_64' in n:
         sub = 1
     else:
