@@ -569,16 +569,19 @@ class GitHubReleaseBot:
                         download_text = "📥 Download"
                     keyboard = [[Button.url(download_text, url=download_url)]]
 
-                    # Caption — include a one-line Persian description of
-                    # the binary so users pick the right one.
+                    # Caption — Persian description goes in its own
+                    # paragraph at the end, bolded. Mixing RTL Persian
+                    # into an LTR line shoves the whole line to the
+                    # right edge on Telegram clients, so keep it on a
+                    # separate paragraph after a blank line.
                     description = describe_asset(asset_name)
-                    desc_line = f"\n📝 {description}" if description else ""
+                    desc_block = f"\n\n**{description}**" if description else ""
                     caption = (
                         f"#{repo.name}\n"
                         f"📦 Version: `{release.get('tag_name', 'N/A')}`\n"
-                        f"📎 File: `{asset_name}`"
-                        f"{desc_line}\n"
+                        f"📎 File: `{asset_name}`\n"
                         f"🔒 SHA256: `{file_hash}`"
+                        f"{desc_block}"
                     )
 
                     # Then send the file using the handle
