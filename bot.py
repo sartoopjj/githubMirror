@@ -158,6 +158,8 @@ def is_client_asset(name: str) -> bool:
         return True
     if n.startswith('thefeed-ios') and n.endswith('.ipa'):
         return True
+    if n.startswith('thefeed-macos') and n.endswith('.dmg'):
+        return True
     return False
 
 # Requested order: openbsd -> termux -> darwin -> linux -> windows -> android
@@ -167,11 +169,16 @@ def is_client_asset(name: str) -> bool:
 def asset_sort_key(name: str):
     n = name.lower()
     # within-bucket tiebreaker — smaller wins, so 64-bit first.
-    # 'universal' is pushed to the end of its bucket on request: when
+    # 'universal' android APK is pushed to the end of its bucket: when
     # users see four arch-specific APKs first they pick the one that
     # matches their phone; only readers who don't recognise their arch
     # fall through to the catch-all universal APK at the bottom.
-    if 'universal' in n:
+    # macOS .dmg is the opposite — it's the drag-install GUI app and
+    # should land FIRST inside the darwin bucket, ahead of the raw CLI
+    # client binaries which are only useful to command-line users.
+    if n.startswith('thefeed-macos') and n.endswith('.dmg'):
+        sub = 0
+    elif 'universal' in n:
         sub = 9
     elif 'arm64' in n or 'amd64' in n or 'x86_64' in n:
         sub = 1
@@ -181,7 +188,8 @@ def asset_sort_key(name: str):
         return (0, sub, n)
     if n.startswith('thefeed-client-android'):
         return (1, sub, n)
-    if 'darwin' in n:
+    # macOS .dmg sits in the darwin bucket alongside the CLI clients.
+    if 'darwin' in n or (n.startswith('thefeed-macos') and n.endswith('.dmg')):
         return (2, sub, n)
     if 'linux' in n:
         return (3, sub, n)
@@ -217,12 +225,30 @@ def describe_asset(name: str) -> str:
             return 'کلاینت خط فرمان اندروید (Termux، ARM ۳۲ بیتی)'
         return 'کلاینت خط فرمان اندروید (Termux)'
     # Desktop / server-OS clients
+    if n.startswith('thefeed-macos') and n.endswith('.dmg'):
+        # First-line headline (bolded by caption builder) + multi-line
+        # body explaining Gatekeeper first-launch workaround. Unsigned
+        # .dmg → macOS shows "cannot verify developer, move to Trash?"
+        # the first time; user must Done → Settings → Privacy & Security
+        # → Open Anyway.
+        return (
+            'مک — نصب با کشیدن (یونیورسال: Intel + Apple Silicon، پیشنهادی)'
+            '\n\n'
+            '⚠️ بار اول که برنامه رو اجرا می‌کنید، macOS می‌گه '
+            '«این برنامه از طرف اپل تأیید نشده، آیا می‌خواهید پاکش کنم؟ '
+            'امن نیست!». روی Done (یا Cancel) بزنید — هرگز Move to Trash نزنید. '
+            'بعد برید به System Settings ← Privacy & Security، '
+            'تا پایین اسکرول کنید، اونجا یه پیام در مورد thefeed '
+            'و دکمه‌ی Open Anyway می‌بینید. روی Open Anyway بزنید '
+            'و در پنجره‌ی بعدی هم Open رو تأیید کنید. '
+            'از این به بعد بدون مشکل اجرا میشه.'
+        )
     if 'darwin' in n:
         if 'arm64' in n:
-            return 'کلاینت مک (Apple Silicon — M1/M2/M3)'
+            return 'کلاینت خط فرمان مک (Apple Silicon — M1/M2/M3)'
         if 'amd64' in n:
-            return 'کلاینت مک (Intel)'
-        return 'کلاینت مک'
+            return 'کلاینت خط فرمان مک (Intel)'
+        return 'کلاینت خط فرمان مک'
     if 'linux' in n:
         if 'arm64' in n:
             return 'کلاینت لینوکس ARM ۶۴ بیتی (مثل رزبری‌پای)'
@@ -574,12 +600,21 @@ class GitHubReleaseBot:
                     keyboard = [[Button.url(download_text, url=download_url)]]
 
                     # Caption — Persian description goes in its own
-                    # paragraph at the end, bolded. Mixing RTL Persian
-                    # into an LTR line shoves the whole line to the
-                    # right edge on Telegram clients, so keep it on a
-                    # separate paragraph after a blank line.
+                    # paragraph at the end. Mixing RTL Persian into an
+                    # LTR line shoves the whole line to the right edge
+                    # on Telegram clients, so keep it on a separate
+                    # paragraph after a blank line. If describe_asset
+                    # returns multiple paragraphs (e.g. the DMG with
+                    # first-launch Gatekeeper instructions), bold only
+                    # the headline and render the rest as regular text.
                     description = describe_asset(asset_name)
-                    desc_block = f"\n\n**{description}**" if description else ""
+                    if description:
+                        head, _, rest = description.partition('\n\n')
+                        desc_block = f"\n\n**{head}**"
+                        if rest:
+                            desc_block += f"\n\n{rest}"
+                    else:
+                        desc_block = ""
                     caption = (
                         f"#{repo.name}\n"
                         f"📦 Version: `{release.get('tag_name', 'N/A')}`\n"
