@@ -790,14 +790,24 @@ class GitHubReleaseBot:
                         logger.info(f"No releases found for {repo.name}")
                         continue
                     
-                    # Get latest non-draft release
+                    # Get latest non-draft, non-RC release. Release
+                    # candidates (tags like vX.Y.Z-rc1, -rc.2, -RC3)
+                    # are skipped — only stable tags get published to
+                    # the channel.
                     for release in releases:
-                        if not release.get('draft', False):
-                            latest_release = release
-                            break
-                    
+                        if release.get('draft', False):
+                            continue
+                        tag = release.get('tag_name', '')
+                        if '-rc' in tag.lower():
+                            logger.info(
+                                f"Skipping RC release {tag} for {repo.name}"
+                            )
+                            continue
+                        latest_release = release
+                        break
+
                     if not latest_release:
-                        logger.info(f"No non-draft releases found for {repo.name}")
+                        logger.info(f"No stable release found for {repo.name}")
                         continue
                 elif repo.google_play_url:
                     latest_release = await self.get_apkmirror_release(repo)
