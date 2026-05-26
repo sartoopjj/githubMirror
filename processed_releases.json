@@ -1,9 +1,9 @@
 {
-  "lastReportMessageId": 125,
+  "lastReportMessageId": 145,
   "theFeed": [
     {
-      "version": "v0.21.0-rc3",
-      "timestamp": 1779704840
+      "version": "v0.21.0",
+      "timestamp": 1779824370
     }
   ]
 }
