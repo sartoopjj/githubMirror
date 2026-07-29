@@ -27,7 +27,10 @@ openbsd  →  termux  →  darwin  →  linux  →  windows  →  android  →  
 ```
 
 Within each platform, 64-bit and `universal` variants are surfaced
-before 32-bit / niche variants.
+before 32-bit / niche variants. Windows ships in three architectures —
+`amd64`, `arm64` (Surface / Snapdragon) and `386` (32-bit) — each with
+its own caption; the arch checks run before the plain 64-bit fallback,
+or every Windows build would be labelled "۶۴ بیتی".
 
 ## Per-file captions
 
@@ -44,7 +47,21 @@ Every uploaded file gets:
 
 ## Summary message
 
-After all files are sent, the bot posts a status report with three
+After all files are sent, the bot posts a status report containing:
+
+- Every tracked project and its latest version.
+- A quoted block listing each file uploaded in this run — its Persian
+  description and a direct `t.me` link to that message in the channel,
+  so a release post can link straight to an individual binary. The
+  description and URL sit on separate lines because a Persian label and
+  an LTR URL on one line get scrambled by bidi reordering. The link base
+  is resolved from the channel entity (public `t.me/<username>/<id>`,
+  otherwise the private `t.me/c/<id>/<id>` form), not from
+  `channel_username` in config — that key names the announcement
+  channel, not necessarily the upload target.
+
+The report is sent as HTML (the quoted block needs a real
+`<blockquote>`, which markdown cannot express) and carries three
 quick-jump buttons:
 
 - 📢 کانال اصلی دفید — [@networkti](https://t.me/networkti)

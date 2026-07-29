@@ -4,6 +4,7 @@ import os
 import json
 import hashlib
 import asyncio
+from html import escape as html_escape
 import logging
 import time
 from datetime import datetime
@@ -264,7 +265,15 @@ def describe_asset(name: str) -> str:
     if 'openbsd' in n:
         return 'کلاینت OpenBSD'
     if 'windows' in n:
-        return 'کلاینت ویندوز ۶۴ بیتی'
+        # Order matters: '386' and 'arm64' must be checked before the plain
+        # 64-bit fallback, or every Windows build is labelled "۶۴ بیتی".
+        if 'arm64' in n:
+            return 'کلاینت ویندوز ARM ۶۴ بیتی (Surface / Snapdragon)'
+        if '386' in n:
+            return 'کلاینت ویندوز ۳۲ بیتی (سیستم‌های قدیمی)'
+        if 'amd64' in n or 'x86_64' in n:
+            return 'کلاینت ویندوز ۶۴ بیتی (پیشنهادی)'
+        return 'کلاینت ویندوز'
     if n.endswith('.ipa') or 'ios' in n:
         return 'iOS — نسخه پیش‌نمایش بدون امضا (نیاز به sideload)'
     return ''
@@ -274,6 +283,11 @@ class GitHubReleaseBot:
     def __init__(self):
         self.config = Config()
         self.processed_releases = {}
+        # (persian name, filename, t.me link) for every file uploaded this run,
+        # replayed as a quoted block in the summary so a release post can link
+        # straight to each binary in the channel.
+        self.uploaded_links = []
+        self._link_base = None
         self.client = None
         self.apkmirror = APKMirror()
         self.last_report_message_id = None
@@ -625,14 +639,24 @@ class GitHubReleaseBot:
 
                     # Then send the file using the handle
                     logger.info(f"Sending file with send_file method...")
-                    await self.client.send_file(
+                    sent_file = await self.client.send_file(
                         channel_id,
                         file=uploaded_file,
                         caption=caption,
                         buttons=keyboard,
                         parse_mode='md'
                     )
-                    
+
+                    link = await self.message_link(channel_id, sent_file)
+                    if link:
+                        self.uploaded_links.append({
+                            'repo': repo.name,
+                            'version': release.get('tag_name', ''),
+                            'name': asset_name,
+                            'desc': (description.partition('\n\n')[0] if description else asset_name),
+                            'link': link,
+                        })
+
                     logger.info(f"Successfully sent file: {asset_name}")
                     
                     # Add delay between uploads
@@ -665,6 +689,31 @@ class GitHubReleaseBot:
         
         logger.info(f"Successfully sent release {release.get('tag_name', 'unknown')} for {repo.name}")
     
+    async def message_link(self, channel_id, message) -> str:
+        """Public t.me link to one uploaded file, or '' if it can't be built."""
+        mid = getattr(message, 'id', None)
+        if not mid:
+            return ''
+        if self._link_base is None:
+            # Resolve from the entity rather than config: the configured
+            # channel_username is the announcement channel, not necessarily
+            # the one files are uploaded to.
+            username = None
+            try:
+                entity = await self.client.get_entity(channel_id)
+                username = getattr(entity, 'username', None)
+            except Exception as e:
+                logger.warning(f"Could not resolve channel entity for links: {e}")
+            if username:
+                self._link_base = f"https://t.me/{username}"
+            else:
+                internal = str(channel_id)
+                # -100XXXXXXXXXX is the bot-API form of a channel id; the
+                # private t.me/c/ link uses the bare internal id.
+                internal = internal[4:] if internal.startswith('-100') else internal.lstrip('-')
+                self._link_base = f"https://t.me/c/{internal}"
+        return f"{self._link_base}/{mid}"
+
     async def delete_previous_reports(self):
         """Delete the last report message"""
         channel_id = self.config.telegram.get('channel_id')
@@ -691,6 +740,27 @@ class GitHubReleaseBot:
         except Exception as e:
             logger.error(f"Error deleting previous report: {e}")
     
+    def build_links_block(self) -> str:
+        """Quoted list of this run's uploads: Persian name + direct t.me link.
+
+        Kept as a blockquote so the report stays compact, and the links are
+        plain text so they can be copied straight into a release post. The
+        name and the URL sit on separate lines — a Persian label and an LTR
+        URL on one line get visually scrambled by bidi reordering.
+        """
+        if not self.uploaded_links:
+            return ""
+        out = "\n🔗 لینک مستقیم فایل‌ها:\n<blockquote>"
+        current = None
+        for i, item in enumerate(self.uploaded_links):
+            header = f"{item['repo']} {item['version']}".strip()
+            if header != current:
+                current = header
+                prefix = "" if i == 0 else "\n"
+                out += f"{prefix}<b>{html_escape(header)}</b>\n"
+            out += f"{html_escape(item['desc'])}\n{html_escape(item['link'])}\n"
+        return out.rstrip("\n") + "</blockquote>\n"
+
     async def send_summary_message(self):
         """Send summary message with list of supported programs"""
         # Get channel info
@@ -707,7 +777,8 @@ class GitHubReleaseBot:
             logger.error("Channel ID must be numeric")
             return
         
-        # Build message text
+        # HTML, not markdown: the per-file link list below needs a real
+        # <blockquote>, which markdown has no syntax for.
         message_text = "#گزارش\n"
         message_text += "وضعیت آخرین بروزرسانی برنامه‌ها مورد بررسی قرار گرفت.\n\n"
         message_text += "📦 پروژه‌های پشتیبانی شده:\n"
@@ -742,7 +813,9 @@ class GitHubReleaseBot:
         
         # Add sorted repositories to message
         for info in repo_info:
-            message_text += f"#{info['name']}: `{info['version']}`\n"
+            message_text += f"#{html_escape(info['name'])}: <code>{html_escape(info['version'])}</code>\n"
+
+        message_text += self.build_links_block()
         
         # Create buttons — thefeed channel directory.
         keyboard = [
@@ -755,7 +828,9 @@ class GitHubReleaseBot:
             sent_message = await self.client.send_message(
                 channel_id,
                 message_text,
-                buttons=keyboard
+                buttons=keyboard,
+                parse_mode='html',
+                link_preview=False
             )
             logger.info("Summary message sent successfully")
             
