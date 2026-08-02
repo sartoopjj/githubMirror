@@ -50,6 +50,9 @@ class Repository:
         self.google_play_url = ""
         self.apple_store_url = ""
         self.microsoft_store_url = ""
+        # TestFlight is a beta channel, not the App Store — kept separate so
+        # apple_store_url can take over once a store build ships.
+        self.testflight_url = ""
 
 class APKMirror:
     def __init__(self, timeout: int = 5, results: int = 5):
@@ -312,6 +315,7 @@ class GitHubReleaseBot:
                 repo.google_play_url = repo_data.get('google_play_url', '')
                 repo.apple_store_url = repo_data.get('apple_store_url', '')
                 repo.microsoft_store_url = repo_data.get('microsoft_store_url', '')
+                repo.testflight_url = repo_data.get('testflight_url', '')
                 self.config.repositories.append(repo)
                 
             logger.info("Configuration loaded successfully")
@@ -740,6 +744,32 @@ class GitHubReleaseBot:
         except Exception as e:
             logger.error(f"Error deleting previous report: {e}")
     
+    def store_links(self):
+        """(label, url) install links per repo, App Store preferred over TestFlight."""
+        out = []
+        for repo in self.config.repositories:
+            if repo.google_play_url:
+                out.append(("گوگل پلی", repo.google_play_url))
+            if repo.apple_store_url:
+                out.append(("اپ استور", repo.apple_store_url))
+            elif repo.testflight_url:
+                out.append(("تست‌فلایت (iOS)", repo.testflight_url))
+        return out
+
+    def build_install_buttons(self):
+        """One row of store buttons, or none when no store URL is configured."""
+        row = [Button.url(f"⬇️ {label}", url) for label, url in self.store_links()]
+        return [row] if row else []
+
+    def build_install_block(self) -> str:
+        """Store links as plain text too, so they can be copied into a post."""
+        links = self.store_links()
+        if not links:
+            return ""
+        out = "\n📲 نصب مستقیم:\n<blockquote>"
+        out += "\n".join(f"{html_escape(label)}\n{html_escape(url)}" for label, url in links)
+        return out + "</blockquote>\n"
+
     def build_links_block(self) -> str:
         """Quoted list of this run's uploads: Persian name + direct t.me link.
 
@@ -815,10 +845,12 @@ class GitHubReleaseBot:
         for info in repo_info:
             message_text += f"#{html_escape(info['name'])}: <code>{html_escape(info['version'])}</code>\n"
 
+        message_text += self.build_install_block()
         message_text += self.build_links_block()
-        
-        # Create buttons — thefeed channel directory.
-        keyboard = [
+
+        # Store buttons first — they are the easiest install path — then the
+        # thefeed channel directory.
+        keyboard = self.build_install_buttons() + [
             [Button.url("📢 کانال اصلی دفید", "https://t.me/networkti")],
             [Button.url("📦 کانال فایل‌های باینری/نصبی دفید", "https://t.me/thefeedfile")],
             [Button.url("⚙ کانال کانفیگ‌های دفید", "https://t.me/thefeedconfig")],

@@ -50,6 +50,11 @@ Every uploaded file gets:
 After all files are sent, the bot posts a status report containing:
 
 - Every tracked project and its latest version.
+- Store install links (Google Play / TestFlight) as both inline buttons and
+  copyable text, driven by `google_play_url`, `apple_store_url` and
+  `testflight_url` in `config.json`. TestFlight is a separate key because it is
+  a beta channel, not the App Store — set `apple_store_url` later and it takes
+  over automatically. Nothing is rendered when no store URL is configured.
 - A quoted block listing each file uploaded in this run — its Persian
   description and a direct `t.me` link to that message in the channel,
   so a release post can link straight to an individual binary. The
