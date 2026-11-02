@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.9-alpine AS builder
+FROM python:3.12-alpine AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Final stage
-FROM python:3.9-alpine
+FROM python:3.12-alpine
 
 RUN apk --no-cache add ca-certificates tzdata
 
